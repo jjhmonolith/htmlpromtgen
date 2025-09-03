@@ -108,6 +108,12 @@ export async function generateInitialProposals(
 - ${prevPageContext}
 - **현재 페이지 ${pageNumber}: ${page.topic}**
 - ${nextPageContext}
+${page.contentAnalysis ? `
+### 📊 콘텐츠 분석 결과
+- **예상 구성**: ${page.contentAnalysis.outline.join(', ')}
+- **예상 섹션 수**: ${page.contentAnalysis.estimatedSections}개
+- **콘텐츠 밀도**: ${page.contentAnalysis.densityScore >= 0.8 ? '높음 (분할 권장)' : page.contentAnalysis.densityScore >= 0.6 ? '적정' : '여유'}
+` : ''}
 
 ### 📜 핵심 규칙
 1.  **자유 서술**: 정해진 키워드 없이, 개발자가 이해하기 쉽도록 레이아웃을 상세히 설명해주세요.
@@ -243,6 +249,12 @@ export async function generateEnhancementSuggestions(
 - 페이지 위치: ${positionContext}
 - 페이지 구성안:
 ${pageProposal.layoutDescription}
+${page.contentAnalysis ? `
+### 📊 콘텐츠 구성 정보
+- **주요 내용**: ${page.contentAnalysis.outline.join(', ')}
+- **섹션 수**: ${page.contentAnalysis.estimatedSections}개
+- **콘텐츠 밀도**: ${page.contentAnalysis.densityScore >= 0.8 ? '높음' : page.contentAnalysis.densityScore >= 0.6 ? '적정' : '여유'}
+` : ''}
 
 ### 제안 가이드라인
 - **목적 지향적 제안**: "애니메이션을 추가하라"가 아니라, "콘텐츠의 스토리를 강화하고, 사용자의 이해를 돕는 점진적 정보 공개(Progressive Disclosure)를 위한 애니메이션을 제안하라."
