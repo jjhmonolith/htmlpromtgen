@@ -88,3 +88,27 @@ export interface GeneratedPlan {
     topic: string;
   }[];
 }
+
+// Project Save Types
+export interface SavedProject {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  currentStep: Step;
+  data: {
+    projectData: ProjectData;
+    visualIdentity?: VisualIdentity;
+    step2Spec?: Step2Spec;
+    step3Spec?: Step3Spec;
+    finalPrompt?: string;
+  };
+}
+
+export interface ProjectMetadata {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  currentStep: Step;
+}

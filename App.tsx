@@ -1,13 +1,15 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Step1Form } from './components/Step1Form';
 import { StepVisualIdentity } from './components/StepVisualIdentity';
 import { Step2Proposal } from './components/Step2Proposal';
 import { Step3Enhancements } from './components/Step3Enhancements';
 import { Step4Prompt } from './components/Step4Prompt';
-import type { ProjectData, VisualIdentity, Step2Spec, Step3Spec, PageProposal, PageEnhancement } from './types';
+import { ProjectSelector } from './components/ProjectSelector';
+import type { ProjectData, VisualIdentity, Step2Spec, Step3Spec, PageProposal, PageEnhancement, SavedProject } from './types';
 import { Step } from './types';
 import { generateVisualIdentity, generateInitialProposals, generateEnhancementSuggestions } from './services/openaiService';
+import { storageService } from './services/storageService';
 
 function App() {
   const [currentStep, setCurrentStep] = useState<Step>(Step.BasicInfo);
@@ -22,15 +24,94 @@ function App() {
   const [step3Spec, setStep3Spec] = useState<Step3Spec | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [showProjectSelector, setShowProjectSelector] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  // Load current project on mount
+  useEffect(() => {
+    const currentProject = storageService.getCurrentProject();
+    if (currentProject) {
+      loadProject(currentProject);
+    } else {
+      // Show project selector if no current project
+      setShowProjectSelector(true);
+    }
+  }, []);
+
+  // Auto-save function
+  const autoSave = useCallback(() => {
+    if (!storageService.isAutosaveEnabled()) return;
+    if (!currentProjectId) return;
+    
+    setSaveStatus('saving');
+    
+    storageService.updateProject(currentProjectId, {
+      name: projectData.projectTitle || '새 프로젝트',
+      currentStep,
+      projectData,
+      visualIdentity: visualIdentity || undefined,
+      step2Spec: step2Spec || undefined,
+      step3Spec: step3Spec || undefined,
+    });
+    
+    setSaveStatus('saved');
+    setTimeout(() => setSaveStatus('idle'), 2000);
+  }, [currentProjectId, currentStep, projectData, visualIdentity, step2Spec, step3Spec]);
+
+  // Load a saved project
+  const loadProject = (project: SavedProject) => {
+    setCurrentProjectId(project.id);
+    setProjectData(project.data.projectData);
+    setCurrentStep(project.currentStep);
+    setVisualIdentity(project.data.visualIdentity || null);
+    setStep2Spec(project.data.step2Spec || null);
+    setStep3Spec(project.data.step3Spec || null);
+    storageService.setCurrentProjectId(project.id);
+    setShowProjectSelector(false);
+  };
+
+  // Start new project
+  const startNewProject = () => {
+    const newProject = storageService.createProject({
+      projectTitle: '',
+      targetAudience: '',
+      pages: [{ id: '1', topic: '' }],
+      suggestions: '',
+    });
+    setCurrentProjectId(newProject.id);
+    setProjectData(newProject.data.projectData);
+    setCurrentStep(Step.BasicInfo);
+    setVisualIdentity(null);
+    setStep2Spec(null);
+    setStep3Spec(null);
+    setShowProjectSelector(false);
+  };
 
   const handleNextStep1 = async (data: ProjectData) => {
     setProjectData(data);
     setCurrentStep(Step.VisualIdentity);
     setIsLoading(true);
     setError(null);
+    
+    // Auto-save before proceeding
+    if (currentProjectId) {
+      storageService.updateProject(currentProjectId, {
+        projectData: data,
+        currentStep: Step.VisualIdentity,
+      });
+    }
+    
     try {
       const identity = await generateVisualIdentity(data);
       setVisualIdentity(identity);
+      
+      // Save after successful generation
+      if (currentProjectId) {
+        storageService.updateProject(currentProjectId, {
+          visualIdentity: identity,
+        });
+      }
     } catch (err) {
       setError('비주얼 아이덴티티 생성에 실패했습니다. 다시 시도해 주세요.');
       console.error(err);
@@ -70,6 +151,14 @@ function App() {
     if (!visualIdentity) return;
     setStep2Spec(spec);
     
+    // Save step2 spec
+    if (currentProjectId) {
+      storageService.updateProject(currentProjectId, {
+        step2Spec: spec,
+        currentStep: Step.Enhancements,
+      });
+    }
+    
     // 이미 step3Spec이 있고 모든 페이지가 로드되었으면 바로 다음 단계로
     if (step3Spec && Object.keys(step3Spec).length === projectData.pages.length) {
       setCurrentStep(Step.Enhancements);
@@ -81,9 +170,18 @@ function App() {
     setIsLoading(true);
     setError(null);
     try {
+        const newStep3Spec: Step3Spec = {};
         await generateEnhancementSuggestions(spec, projectData, visualIdentity, (pageId: string, enhancement: PageEnhancement) => {
+          newStep3Spec[pageId] = enhancement;
           setStep3Spec(prev => ({ ...prev, [pageId]: enhancement }));
         });
+        
+        // Save step3 spec after generation
+        if (currentProjectId) {
+          storageService.updateProject(currentProjectId, {
+            step3Spec: newStep3Spec,
+          });
+        }
     } catch (err) {
         setError('개선 사항 생성에 실패했습니다. 다시 시도해 주세요.');
         console.error(err);
@@ -96,6 +194,14 @@ function App() {
   const handleNextStep4 = (spec: Step3Spec) => {
     setStep3Spec(spec);
     setCurrentStep(Step.FinalPrompt);
+    
+    // Save step3 spec and update step
+    if (currentProjectId) {
+      storageService.updateProject(currentProjectId, {
+        step3Spec: spec,
+        currentStep: Step.FinalPrompt,
+      });
+    }
   };
 
   const handlePreviousStep = () => {
@@ -105,12 +211,16 @@ function App() {
   };
   
   const handleStartOver = () => {
-    setProjectData({
+    // Create a new project
+    const newProject = storageService.createProject({
       projectTitle: '',
       targetAudience: '',
       pages: [{ id: '1', topic: '' }],
       suggestions: '',
     });
+    
+    setCurrentProjectId(newProject.id);
+    setProjectData(newProject.data.projectData);
     setVisualIdentity(null);
     setStep2Spec(null);
     setStep3Spec(null);
@@ -187,10 +297,55 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 font-sans">
+      {/* Project Selector Modal */}
+      {showProjectSelector && (
+        <ProjectSelector
+          onProjectSelect={loadProject}
+          onNewProject={startNewProject}
+        />
+      )}
+      
+      {/* Save Status Indicator */}
+      <div className="fixed top-4 left-4 z-40">
+        {saveStatus === 'saving' && (
+          <div className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-lg shadow-sm">
+            💾 저장 중...
+          </div>
+        )}
+        {saveStatus === 'saved' && (
+          <div className="px-3 py-1 bg-green-100 text-green-800 rounded-lg shadow-sm">
+            ✅ 저장됨
+          </div>
+        )}
+      </div>
+      
+      {/* Project Menu Button */}
+      {!showProjectSelector && (
+        <div className="fixed top-4 right-4 z-40 flex gap-2">
+          <button
+            onClick={() => setShowProjectSelector(true)}
+            className="px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
+          >
+            📂 프로젝트
+          </button>
+          <button
+            onClick={autoSave}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors"
+          >
+            💾 저장
+          </button>
+        </div>
+      )}
+      
       <div className="w-full max-w-5xl mx-auto">
         <header className="text-center mb-8">
           <h1 className="text-4xl font-bold text-slate-800 tracking-tight">EduContent 프롬프트 생성기</h1>
           <p className="text-slate-500 mt-2">AI와 함께 5단계로 스크롤 없는 맞춤형 교육 콘텐츠를 만들어 보세요.</p>
+          {currentProjectId && projectData.projectTitle && (
+            <p className="text-sm text-slate-600 mt-2 font-medium">
+              현재 프로젝트: {projectData.projectTitle}
+            </p>
+          )}
         </header>
         {error && (
             <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6" role="alert">
