@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ProjectData, Step2Spec, PageProposal, PageEnhancement, GeneratedPlan, VisualIdentity } from '../types';
+import type { ProjectData, Step2Spec, PageProposal, PageEnhancement, GeneratedPlan, VisualIdentity, PageInfo } from '../types';
 
 const client = new OpenAI({
     apiKey: import.meta.env.VITE_OPENAI_API_KEY as string,
@@ -359,5 +359,97 @@ export async function generateCurriculumPlan(userInput: string): Promise<Generat
     } catch (error) {
         console.error("Failed to parse curriculum plan:", error);
         throw new Error("Invalid response format from AI");
+    }
+}
+// New function to analyze content volume for each page
+export async function analyzeContentVolume(projectData: ProjectData): Promise<PageInfo[]> {
+    const prompt = `당신은 교육 콘텐츠 분량 평가 전문가입니다. 각 페이지의 주제를 분석하여 1600x1000px 화면에 들어갈 적정 콘텐츠 분량을 평가해주세요.
+
+### 📜 프로젝트 정보
+- **프로젝트명**: ${projectData.projectTitle}
+- **대상 학습자**: ${projectData.targetAudience}
+
+### 📋 평가 기준
+1. **분량 점수 (0-1)**: 0.8 이상이면 내용이 너무 많음, 0.6-0.8은 적정, 0.6 미만은 여유 있음
+2. **예상 섹션 수**: 각 페이지에 필요한 주요 섹션 개수
+3. **내용 개요**: 각 페이지에 들어갈 주요 내용 3-5개 항목
+4. **분할 제안**: 내용이 너무 많은 경우(0.8 이상), 어떻게 분할할지 제안
+
+### 페이지 목록
+${projectData.pages.map((page, index) => `페이지 ${index + 1}: ${page.topic}`).join('\n')}
+
+### 출력 형식
+각 페이지에 대해 다음 형식의 JSON 배열로 응답해주세요:
+[
+    {
+        "pageId": "페이지 ID",
+        "outline": ["주요 내용 1", "주요 내용 2", "주요 내용 3"],
+        "estimatedSections": 4,
+        "densityScore": 0.7,
+        "suggestedSplit": {
+            "shouldSplit": false,
+            "splitInto": 1,
+            "splitSuggestions": []
+        }
+    },
+    // 내용이 많은 경우 예시:
+    {
+        "pageId": "페이지 ID",
+        "outline": ["내용1", "내용2", "내용3", "내용4", "내용5"],
+        "estimatedSections": 8,
+        "densityScore": 0.9,
+        "suggestedSplit": {
+            "shouldSplit": true,
+            "splitInto": 2,
+            "splitSuggestions": [
+                {
+                    "topic": "분할된 페이지 1 주제",
+                    "outline": ["내용1", "내용2", "내용3"]
+                },
+                {
+                    "topic": "분할된 페이지 2 주제", 
+                    "outline": ["내용4", "내용5"]
+                }
+            ]
+        }
+    }
+]`;
+
+    try {
+        const response = await client.responses.create({
+            model: "gpt-5",
+            input: [
+                {
+                    role: "system",
+                    content: "You are an expert in educational content volume assessment. Always respond in valid JSON format in Korean."
+                },
+                {
+                    role: "user",
+                    content: prompt
+                }
+            ]
+        });
+
+        const analysisResults = JSON.parse(response.output_text.trim()) as any[];
+        
+        // Map the analysis results back to the pages
+        return projectData.pages.map((page, index) => {
+            const analysis = analysisResults[index];
+            if (analysis) {
+                return {
+                    ...page,
+                    contentAnalysis: {
+                        outline: analysis.outline,
+                        estimatedSections: analysis.estimatedSections,
+                        densityScore: analysis.densityScore,
+                        suggestedSplit: analysis.suggestedSplit
+                    }
+                };
+            }
+            return page;
+        });
+    } catch (error) {
+        console.error("Failed to analyze content volume:", error);
+        throw new Error("Content analysis failed");
     }
 }

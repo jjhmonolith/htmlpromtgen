@@ -6,7 +6,7 @@ import { TrashIcon } from './icons/TrashIcon';
 import { UploadIcon } from './icons/UploadIcon';
 import { FileIcon } from './icons/FileIcon';
 import { SparklesIcon } from './icons/SparklesIcon';
-import { generateCurriculumPlan } from '../services/openaiService';
+import { generateCurriculumPlan, analyzeContentVolume } from '../services/openaiService';
 
 interface Step1FormProps {
   initialData: ProjectData;
@@ -14,12 +14,67 @@ interface Step1FormProps {
   isProcessing: boolean;
 }
 
+// Component for displaying content analysis results
+const ContentAnalysisCard: React.FC<{
+  page: PageInfo;
+  onSplit: (pageId: string) => void;
+  isAnalyzing: boolean;
+}> = ({ page, onSplit, isAnalyzing }) => {
+  const analysis = page.contentAnalysis;
+  
+  if (!analysis) {
+    return null;
+  }
+
+  const getDensityColor = (score: number) => {
+    if (score >= 0.8) return 'text-red-600 bg-red-50 border-red-200';
+    if (score >= 0.6) return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+    return 'text-green-600 bg-green-50 border-green-200';
+  };
+
+  const getDensityText = (score: number) => {
+    if (score >= 0.8) return '⚠️ 내용이 너무 많음';
+    if (score >= 0.6) return '📊 적정 분량';
+    return '✅ 여유 있음';
+  };
+
+  return (
+    <div className={`mt-3 p-3 rounded-lg border ${getDensityColor(analysis.densityScore)}`}>
+      <div className="flex justify-between items-start mb-2">
+        <span className="text-sm font-semibold">{getDensityText(analysis.densityScore)}</span>
+        {analysis.suggestedSplit?.shouldSplit && (
+          <button
+            onClick={() => onSplit(page.id)}
+            disabled={isAnalyzing}
+            className="px-3 py-1 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:bg-gray-400"
+          >
+            📄 {analysis.suggestedSplit.splitInto}개로 분할
+          </button>
+        )}
+      </div>
+      <div className="text-sm space-y-1">
+        <p className="font-medium">예상 구성:</p>
+        <ul className="list-disc list-inside text-xs space-y-0.5 ml-2">
+          {analysis.outline.map((item, idx) => (
+            <li key={idx} className="line-clamp-1">{item}</li>
+          ))}
+        </ul>
+        <p className="text-xs mt-2 opacity-75">
+          예상 섹션 수: {analysis.estimatedSections}개
+        </p>
+      </div>
+    </div>
+  );
+};
+
 export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isProcessing }) => {
   const [projectTitle, setProjectTitle] = useState(initialData.projectTitle);
   const [targetAudience, setTargetAudience] = useState(initialData.targetAudience);
   const [pages, setPages] = useState<PageInfo[]>(initialData.pages);
   const [suggestions, setSuggestions] = useState(initialData.suggestions || '');
   const [error, setError] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [hasAnalyzed, setHasAnalyzed] = useState(false);
   
   // State for AI curriculum generation modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -31,15 +86,18 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
     if (pages.length >= 10) return;
     const newPage: PageInfo = { id: Date.now().toString(), topic: '' };
     setPages([...pages, newPage]);
+    setHasAnalyzed(false); // Reset analysis when pages change
   };
 
   const handleRemovePage = (id: string) => {
     if (pages.length <= 1) return;
     setPages(pages.filter(page => page.id !== id));
+    setHasAnalyzed(false); // Reset analysis when pages change
   };
 
   const handlePageTopicChange = (id: string, topic: string) => {
     setPages(pages.map(page => (page.id === id ? { ...page, topic } : page)));
+    setHasAnalyzed(false); // Reset analysis when content changes
   };
 
   const handleFileChange = (id: string, file: File | null) => {
@@ -74,6 +132,60 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
     }));
   };
   
+  // New function to analyze content volume
+  const handleAnalyzeContent = async () => {
+    if (!projectTitle || !targetAudience || pages.some(p => !p.topic)) {
+      setError('분량 검토를 위해 모든 필수 항목을 먼저 입력해주세요.');
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    setError('');
+    
+    try {
+      const analyzedPages = await analyzeContentVolume({
+        projectTitle,
+        targetAudience,
+        pages,
+        suggestions
+      });
+      
+      setPages(analyzedPages);
+      setHasAnalyzed(true);
+    } catch (err) {
+      console.error('Content analysis failed:', err);
+      setError('분량 분석에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // New function to handle page splitting
+  const handleSplitPage = (pageId: string) => {
+    const pageIndex = pages.findIndex(p => p.id === pageId);
+    const page = pages[pageIndex];
+    
+    if (!page || !page.contentAnalysis?.suggestedSplit) return;
+    
+    const { splitSuggestions } = page.contentAnalysis.suggestedSplit;
+    
+    // Create new pages based on split suggestions
+    const newPages = [...pages];
+    const splitPages = splitSuggestions.map((suggestion, idx) => ({
+      id: `${pageId}-split-${idx}`,
+      topic: suggestion.topic,
+      contentAnalysis: {
+        outline: suggestion.outline,
+        estimatedSections: Math.ceil(suggestion.outline.length / 2),
+        densityScore: 0.5, // Assume balanced after split
+      }
+    }));
+    
+    // Replace original page with split pages
+    newPages.splice(pageIndex, 1, ...splitPages);
+    setPages(newPages);
+  };
+  
   const handleTestMode = () => {
     setProjectTitle('AI 리터러시 첫걸음');
     setTargetAudience('AI에 대해 처음 배우는 중학생');
@@ -85,6 +197,7 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
       { id: 'test-5', topic: "오늘 배운 AI 개념 퀴즈! - 간단한 O/X 퀴즈로 학습 내용 확인하며 마무리" },
     ]);
     setSuggestions('중학생 눈높이에 맞춰 친근한 말투와 귀여운 아이콘을 사용해주세요. 전체적으로 밝고 긍정적인 느낌을 원해요.');
+    setHasAnalyzed(false); // Reset analysis for test mode
   };
 
   const handleGeneratePlan = async () => {
@@ -102,6 +215,7 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
         setSuggestions(''); // Reset suggestions
         setIsModalOpen(false);
         setModalInput('');
+        setHasAnalyzed(false); // Reset analysis for generated plan
     } catch (err) {
         console.error("Failed to generate curriculum plan:", err);
         setModalError('계획 생성에 실패했습니다. 잠시 후 다시 시도해주세요.');
@@ -176,14 +290,37 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
         <div>
           <div className="flex justify-between items-center mb-4">
             <label className="text-lg font-medium text-slate-700">페이지별 주제 ({totalPages}/10)</label>
-            <button
-              onClick={handleAddPage}
-              disabled={pages.length >= 10}
-              className="flex items-center space-x-2 text-sm font-medium text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed"
-            >
-              <PlusIcon />
-              <span>페이지 추가</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={handleAnalyzeContent}
+                disabled={isAnalyzing || !projectTitle || !targetAudience || pages.some(p => !p.topic)}
+                className={`flex items-center space-x-2 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors ${
+                  hasAnalyzed 
+                    ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                    : 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+                } disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed`}
+              >
+                {isAnalyzing ? (
+                  <>
+                    <span className="animate-spin">⏳</span>
+                    <span>분석 중...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>📊</span>
+                    <span>{hasAnalyzed ? '재검토' : '분량 검토'}</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleAddPage}
+                disabled={pages.length >= 10}
+                className="flex items-center space-x-2 text-sm font-medium text-blue-600 hover:text-blue-800 disabled:text-slate-400 disabled:cursor-not-allowed"
+              >
+                <PlusIcon />
+                <span>페이지 추가</span>
+              </button>
+            </div>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -208,6 +345,13 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
                   placeholder={`페이지 ${index + 1} 주제`}
                   className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
                   rows={4}
+                />
+
+                {/* Content Analysis Results */}
+                <ContentAnalysisCard 
+                  page={page} 
+                  onSplit={handleSplitPage}
+                  isAnalyzing={isAnalyzing}
                 />
 
                 {page.image ? (

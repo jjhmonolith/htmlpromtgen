@@ -7,6 +7,20 @@ export interface PageInfo {
     mimeType: string;
     data: string; // base64 encoded
   };
+  // Content analysis fields
+  contentAnalysis?: {
+    outline: string[];  // AI generated content outline
+    estimatedSections: number;
+    densityScore: number; // 0-1, where 1 is very dense
+    suggestedSplit?: {
+      shouldSplit: boolean;
+      splitInto: number;
+      splitSuggestions: Array<{
+        topic: string;
+        outline: string[];
+      }>;
+    };
+  };
 }
 
 export interface ProjectData {
