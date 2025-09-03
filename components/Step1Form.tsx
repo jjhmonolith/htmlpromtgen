@@ -42,15 +42,18 @@ const ContentAnalysisCard: React.FC<{
     <div className={`mt-3 p-3 rounded-lg border ${getDensityColor(analysis.densityScore)}`}>
       <div className="flex justify-between items-start mb-2">
         <span className="text-sm font-semibold">{getDensityText(analysis.densityScore)}</span>
-        {analysis.suggestedSplit?.shouldSplit && (
-          <button
-            onClick={() => onSplit(page.id)}
-            disabled={isAnalyzing}
-            className="px-3 py-1 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:bg-gray-400"
-          >
-            📄 {analysis.suggestedSplit.splitInto}개로 분할
-          </button>
-        )}
+        <button
+          onClick={() => onSplit(page.id)}
+          disabled={isAnalyzing}
+          className={`px-3 py-1 text-white text-sm font-medium rounded transition-colors disabled:bg-gray-400 ${
+            analysis.densityScore >= 0.8 
+              ? 'bg-red-600 hover:bg-red-700' 
+              : 'bg-blue-600 hover:bg-blue-700'
+          }`}
+          title="페이지를 여러 개로 분할하기"
+        >
+          📄 분할하기
+        </button>
       </div>
       <div className="text-sm space-y-1">
         <p className="font-medium">예상 구성:</p>
@@ -165,25 +168,53 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
     const pageIndex = pages.findIndex(p => p.id === pageId);
     const page = pages[pageIndex];
     
-    if (!page || !page.contentAnalysis?.suggestedSplit) return;
+    if (!page) return;
     
-    const { splitSuggestions } = page.contentAnalysis.suggestedSplit;
-    
-    // Create new pages based on split suggestions
     const newPages = [...pages];
-    const splitPages = splitSuggestions.map((suggestion, idx) => ({
-      id: `${pageId}-split-${idx}`,
-      topic: suggestion.topic,
-      contentAnalysis: {
-        outline: suggestion.outline,
-        estimatedSections: Math.ceil(suggestion.outline.length / 2),
-        densityScore: 0.5, // Assume balanced after split
-      }
-    }));
     
-    // Replace original page with split pages
-    newPages.splice(pageIndex, 1, ...splitPages);
+    // If AI suggested split is available, use it
+    if (page.contentAnalysis?.suggestedSplit?.splitSuggestions) {
+      const { splitSuggestions } = page.contentAnalysis.suggestedSplit;
+      const splitPages = splitSuggestions.map((suggestion, idx) => ({
+        id: `${pageId}-split-${idx}`,
+        topic: suggestion.topic,
+        contentAnalysis: {
+          outline: suggestion.outline,
+          estimatedSections: Math.ceil(suggestion.outline.length / 2),
+          densityScore: 0.5, // Assume balanced after split
+        }
+      }));
+      newPages.splice(pageIndex, 1, ...splitPages);
+    } else {
+      // Manual split: divide into two pages
+      const topicPart1 = page.topic ? `${page.topic} (파트 1)` : '파트 1';
+      const topicPart2 = page.topic ? `${page.topic} (파트 2)` : '파트 2';
+      
+      const splitPages = [
+        {
+          id: `${pageId}-split-0`,
+          topic: topicPart1,
+          contentAnalysis: page.contentAnalysis ? {
+            outline: page.contentAnalysis.outline.slice(0, Math.ceil(page.contentAnalysis.outline.length / 2)),
+            estimatedSections: Math.ceil(page.contentAnalysis.estimatedSections / 2),
+            densityScore: 0.5,
+          } : undefined
+        },
+        {
+          id: `${pageId}-split-1`,
+          topic: topicPart2,
+          contentAnalysis: page.contentAnalysis ? {
+            outline: page.contentAnalysis.outline.slice(Math.ceil(page.contentAnalysis.outline.length / 2)),
+            estimatedSections: Math.floor(page.contentAnalysis.estimatedSections / 2),
+            densityScore: 0.5,
+          } : undefined
+        }
+      ];
+      newPages.splice(pageIndex, 1, ...splitPages);
+    }
+    
     setPages(newPages);
+    setHasAnalyzed(false); // Reset analysis after splitting
   };
   
   const handleTestMode = () => {
@@ -328,14 +359,28 @@ export const Step1Form: React.FC<Step1FormProps> = ({ initialData, onNext, isPro
               <div key={page.id} className="bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col gap-3">
                 <div className="flex justify-between items-center">
                   <p className="font-semibold text-slate-600">페이지 {index + 1}</p>
-                  <button
-                    onClick={() => handleRemovePage(page.id)}
-                    disabled={pages.length <= 1}
-                    className="p-1 text-slate-400 hover:text-red-600 disabled:text-slate-300 disabled:cursor-not-allowed transition-colors"
-                    aria-label={`페이지 ${index + 1} 제거`}
-                  >
-                    <TrashIcon />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {!page.contentAnalysis && (
+                      <button
+                        onClick={() => handleSplitPage(page.id)}
+                        className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                        aria-label={`페이지 ${index + 1} 분할`}
+                        title="페이지를 2개로 분할"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                        </svg>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleRemovePage(page.id)}
+                      disabled={pages.length <= 1}
+                      className="p-1 text-slate-400 hover:text-red-600 disabled:text-slate-300 disabled:cursor-not-allowed transition-colors"
+                      aria-label={`페이지 ${index + 1} 제거`}
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
                 </div>
                 
                 <textarea
