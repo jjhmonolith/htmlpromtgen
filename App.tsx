@@ -6,6 +6,7 @@ import { Step2Proposal } from './components/Step2Proposal';
 import { Step3Enhancements } from './components/Step3Enhancements';
 import { Step4Prompt } from './components/Step4Prompt';
 import { ProjectSelector } from './components/ProjectSelector';
+import { useAutoSave } from './hooks/useAutoSave';
 import type { ProjectData, VisualIdentity, Step2Spec, Step3Spec, PageProposal, PageEnhancement, SavedProject } from './types';
 import { Step } from './types';
 import { generateVisualIdentity, generateInitialProposals, generateEnhancementSuggestions } from './services/openaiService';
@@ -26,38 +27,36 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [showProjectSelector, setShowProjectSelector] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
-  // Load current project on mount
+  // Auto-save hook
+  const { saveManually } = useAutoSave({
+    projectId: currentProjectId,
+    projectData,
+    currentStep,
+    visualIdentity,
+    step2Spec,
+    step3Spec,
+    onSaveStatusChange: setSaveStatus,
+  });
+
+  // Load current project on mount or create new one
   useEffect(() => {
     const currentProject = storageService.getCurrentProject();
     if (currentProject) {
       loadProject(currentProject);
     } else {
-      // Show project selector if no current project
-      setShowProjectSelector(true);
+      // Create a default project if none exists
+      const newProject = storageService.createProject({
+        projectTitle: '',
+        targetAudience: '',
+        pages: [{ id: '1', topic: '' }],
+        suggestions: '',
+      });
+      setCurrentProjectId(newProject.id);
     }
   }, []);
 
-  // Auto-save function
-  const autoSave = useCallback(() => {
-    if (!storageService.isAutosaveEnabled()) return;
-    if (!currentProjectId) return;
-    
-    setSaveStatus('saving');
-    
-    storageService.updateProject(currentProjectId, {
-      name: projectData.projectTitle || '새 프로젝트',
-      currentStep,
-      projectData,
-      visualIdentity: visualIdentity || undefined,
-      step2Spec: step2Spec || undefined,
-      step3Spec: step3Spec || undefined,
-    });
-    
-    setSaveStatus('saved');
-    setTimeout(() => setSaveStatus('idle'), 2000);
-  }, [currentProjectId, currentStep, projectData, visualIdentity, step2Spec, step3Spec]);
 
   // Load a saved project
   const loadProject = (project: SavedProject) => {
@@ -71,10 +70,15 @@ function App() {
     setShowProjectSelector(false);
   };
 
-  // Start new project
-  const startNewProject = () => {
+  // Start new project with title
+  const startNewProject = (title: string) => {
+    // Save current project before creating new one
+    if (currentProjectId) {
+      saveManually();
+    }
+    
     const newProject = storageService.createProject({
-      projectTitle: '',
+      projectTitle: title,
       targetAudience: '',
       pages: [{ id: '1', topic: '' }],
       suggestions: '',
@@ -302,40 +306,39 @@ function App() {
         <ProjectSelector
           onProjectSelect={loadProject}
           onNewProject={startNewProject}
+          currentProjectId={currentProjectId}
         />
       )}
       
       {/* Save Status Indicator */}
       <div className="fixed top-4 left-4 z-40">
-        {saveStatus === 'saving' && (
-          <div className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-lg shadow-sm">
-            💾 저장 중...
-          </div>
-        )}
-        {saveStatus === 'saved' && (
-          <div className="px-3 py-1 bg-green-100 text-green-800 rounded-lg shadow-sm">
-            ✅ 저장됨
-          </div>
-        )}
+        <div className={`px-3 py-2 rounded-lg shadow-sm transition-all ${
+          saveStatus === 'saving' ? 'bg-yellow-100 text-yellow-800' :
+          saveStatus === 'saved' ? 'bg-green-100 text-green-800' :
+          saveStatus === 'error' ? 'bg-red-100 text-red-800' :
+          'bg-white text-gray-600 border border-gray-200'
+        }`}>
+          {saveStatus === 'saving' && '💾 저장 중...'}
+          {saveStatus === 'saved' && '✅ 저장됨'}
+          {saveStatus === 'error' && '❌ 저장 실패'}
+          {saveStatus === 'idle' && (
+            <>
+              {currentProjectId && projectData.projectTitle ? (
+                <span className="text-sm">📝 {projectData.projectTitle}</span>
+              ) : (
+                <span className="text-sm">📝 새 프로젝트</span>
+              )}
+            </>
+          )}
+        </div>
       </div>
       
       {/* Project Menu Button */}
-      {!showProjectSelector && (
-        <div className="fixed top-4 right-4 z-40 flex gap-2">
-          <button
-            onClick={() => setShowProjectSelector(true)}
-            className="px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
-          >
-            📂 프로젝트
-          </button>
-          <button
-            onClick={autoSave}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors"
-          >
-            💾 저장
-          </button>
-        </div>
-      )}
+      <ProjectSelector
+        onProjectSelect={loadProject}
+        onNewProject={startNewProject}
+        currentProjectId={currentProjectId}
+      />
       
       <div className="w-full max-w-5xl mx-auto">
         <header className="text-center mb-8">

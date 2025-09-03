@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { storageService } from '../services/storageService';
+import { NewProjectModal } from './NewProjectModal';
 import type { ProjectMetadata, SavedProject } from '../types';
 
 interface ProjectSelectorProps {
   onProjectSelect: (project: SavedProject) => void;
-  onNewProject: () => void;
+  onNewProject: (title: string) => void;
+  currentProjectId?: string | null;
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({ 
   onProjectSelect, 
-  onNewProject 
+  onNewProject,
+  currentProjectId 
 }) => {
   const [projects, setProjects] = useState<ProjectMetadata[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
 
   useEffect(() => {
     loadProjects();
@@ -57,22 +61,31 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     return stepNames[step - 1] || '기본 정보';
   };
 
+  const handleNewProject = (title: string) => {
+    setShowNewProjectModal(false);
+    setIsOpen(false);
+    onNewProject(title);
+  };
+
   if (!isOpen) {
     return (
-      <div className="fixed top-4 right-4 z-50 flex gap-2">
+      <>
         <button
           onClick={() => setIsOpen(true)}
-          className="px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
+          className="fixed top-4 right-4 z-40 px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors flex items-center gap-2"
         >
-          📂 프로젝트 열기
+          <span>📂</span>
+          <span>프로젝트</span>
+          {currentProjectId && (
+            <span className="text-xs text-gray-500">•</span>
+          )}
         </button>
-        <button
-          onClick={onNewProject}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors"
-        >
-          ➕ 새 프로젝트
-        </button>
-      </div>
+        <NewProjectModal 
+          isOpen={showNewProjectModal}
+          onClose={() => setShowNewProjectModal(false)}
+          onCreate={handleNewProject}
+        />
+      </>
     );
   }
 
@@ -96,10 +109,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             <div className="text-center py-12">
               <p className="text-gray-500 mb-4">저장된 프로젝트가 없습니다</p>
               <button
-                onClick={() => {
-                  setIsOpen(false);
-                  onNewProject();
-                }}
+                onClick={() => setShowNewProjectModal(true)}
                 className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
                 새 프로젝트 시작하기
@@ -109,10 +119,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* New Project Card */}
               <div
-                onClick={() => {
-                  setIsOpen(false);
-                  onNewProject();
-                }}
+                onClick={() => setShowNewProjectModal(true)}
                 className="border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-blue-500 hover:bg-blue-50 transition-all cursor-pointer group"
               >
                 <div className="text-center">
@@ -165,6 +172,11 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
           )}
         </div>
       </div>
+      <NewProjectModal 
+        isOpen={showNewProjectModal}
+        onClose={() => setShowNewProjectModal(false)}
+        onCreate={handleNewProject}
+      />
     </div>
   );
 };
